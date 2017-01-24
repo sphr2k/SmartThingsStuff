@@ -3,7 +3,7 @@
  *
  *	Author: Jan Werner based on Button Controller App for ZWN-SC7 by Matt Frank based on VRCS Button Controller by Brian Dahlem, based on SmartThings Button Controller
  *	Date Created: 2017-01-14
- *  	Last Updated: 2017-01-14
+ *  Last Updated: 2017-01-14
  * 
  * 	Contributions from erocm1231 @ SmartThings Community
  *
@@ -12,7 +12,7 @@ definition(
     name: "Mi Magic Cube Controller",
     namespace: "janwerner",
     author: "Jan Werner, using code from Matt Frank and Brian Dahlem",
-    description: "Mi Magic Cube Controller App",
+    description: "Use your Mi Magic Cube to control things",
     category: "Convenience",
     iconUrl: "https://s3.amazonaws.com/smartapp-icons/MyApps/Cat-MyApps.png",
     iconX2Url: "https://s3.amazonaws.com/smartapp-icons/MyApps/Cat-MyApps@2x.png"
@@ -30,7 +30,7 @@ preferences {
 }
 
 def selectButton() {
-  dynamicPage(name: "selectButton", title: "First, select which ZWN-SC7", nextPage: "configureButton1", uninstall: configured()) {
+  dynamicPage(name: "selectButton", title: "Select the Mi Magic Cube device", nextPage: "configureButton1", uninstall: configured()) {
     section {
       input "buttonDevice", "capability.button", title: "Controller", multiple: false, required: true
     }
@@ -43,34 +43,34 @@ def selectButton() {
 }
 
 def configureButton1() {
-  dynamicPage(name: "configureButton1", title: "Shake the Cube",
+  dynamicPage(name: "configureButton1", title: "Shake the Cube to ...",
     nextPage: "configureButton2", uninstall: configured(), getButtonSections(1))
 
 }
 
 def configureButton2() {
-  dynamicPage(name: "configureButton2", title: "Flip the Cube by 90 degrees",
+  dynamicPage(name: "configureButton2", title: "Flip the Cube by 90 degrees to ...",
     nextPage: "configureButton3", uninstall: configured(), getButtonSections(2))
 }
 
 def configureButton3() {
-  dynamicPage(name: "configureButton3", title: "Fip the Cube by 180 degrees",
+  dynamicPage(name: "configureButton3", title: "Fip the Cube by 180 degrees to ...",
     nextPage: "configureButton4", uninstall: configured(), getButtonSections(3))
 }
 def configureButton4() {
-  dynamicPage(name: "configureButton4", title: "Slide the Cube",
+  dynamicPage(name: "configureButton4", title: "Slide the Cube to ...",
     nextPage: "configureButton5", uninstall: configured(), getButtonSections(4))
 }
 def configureButton5() {
-  dynamicPage(name: "configureButton5", title: "Knock on the Cube",
+  dynamicPage(name: "configureButton5", title: "Knock on the Cube to ...",
     nextPage: "configureButton6", uninstall: configured(), getButtonSections(5))
 }
 def configureButton6() {
-  dynamicPage(name: "configureButton6", title: "Rotate the Cube to the Left",
+  dynamicPage(name: "configureButton6", title: "Rotate the Cube to the Left to ...",
     nextPage: "configureButton7", uninstall: configured(), getButtonSections(6))
 }
 def configureButton7() {
-  dynamicPage(name: "configureButton7", title: "Rotate the Cube to the Right",
+  dynamicPage(name: "configureButton7", title: "Rotate the Cube to the Right to ...",
     install: true, uninstall: true, getButtonSections(7))
 }
 
