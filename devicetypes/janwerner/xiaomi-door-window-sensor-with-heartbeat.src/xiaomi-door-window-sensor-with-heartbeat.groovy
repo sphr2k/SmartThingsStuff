@@ -1,5 +1,5 @@
 /**
- *  Xiaomi Door/Window Sensor
+ *  Xiaomi Door/Window Sensor (with Heartbeat)
  *
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -11,7 +11,7 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- * Based on original DH by Eric Maycock 2015 and Rave from Lazcad
+ *  Based on original DH by Eric Maycock 2015 and Rave from Lazcad
  *  change log:
  *  add DH Colours
  *  added 100% battery max
@@ -20,7 +20,7 @@
  *
  */
 metadata {
-   definition (name: "Xiaomi Door/Window Sensor (with Heartbeat)", namespace: "a4refillpad", author: "a4refillpad") {
+   definition (name: "Xiaomi Door/Window Sensor (with Heartbeat)", namespace: "janwerner", author: "janwerner") {
    capability "Configuration"
    capability "Sensor"
    capability "Contact Sensor"
