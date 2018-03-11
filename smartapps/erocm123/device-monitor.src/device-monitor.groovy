@@ -45,6 +45,12 @@
  *  - Only on certain days of the week.
  *  - Only when mode is . . .
  *
+ *  2017-06-08 - Added support for Ask Alexa Queue Support. Also added Ask Alexa options to automatically expire messages after x hours
+ *               and overwrite messages that are sent as reminders (to prevent a backlog of reminder alerts).
+ *  2017-03-08 - Added an option to use Offline / Online status when available. The new Health Check capability
+ *               updates the offline / online status when communication is sent from the device. This eliminates
+ *               the need to look at events (which may not update because of duplicate events anyway).
+ *
  *  2016-08-21 - Lot's of changes. Layout has been reorganized to make navigation easier. Battery alerts available. You can
  *               exclude devices from event checks or battery checks. New logo. Internal bug fixes and optimizations. 
  *
@@ -139,10 +145,8 @@ def pageSettings() {
                 6: "3 Hours"
             ]
 
-            input "checkEvent", "boolean", title: "Run a check each time one of the selected devices sends an event?", required: false, submitOnChange: true, value: false
-            if (settings.checkEvent != null && checkEvent.toBoolean() == true) {
-                input "minimumCheck", "number", title: "Minimum time (in minutes) between checks. Useful if you use the above option and subscribe to many devices.", required: false, value: 15
-            }
+            input "checkEvent", "bool", title: "Run a check each time one of the selected devices sends an event?", required: false, submitOnChange: true, value: false
+            input "minimumCheck", "number", title: "Minimum time (in minutes) between checks. Useful if you use the above option and subscribe to many devices.", required: false, value: 5
             def timeLabel = timeIntervalLabel()
             href "timeIntervalInput", title: "Only during a certain time", description: timeLabel ?: "Tap to set", state: timeLabel ? "complete" : null
 
@@ -153,7 +157,7 @@ def pageSettings() {
         }
         
         section("Battery Settings") {
-        input "checkBattery", "boolean", title: "Check battery values?", required: false, submitOnChange: true, value: false
+        input "checkBattery", "bool", title: "Check battery values?", required: false, submitOnChange: true, value: false
             if (settings.checkBattery != null && checkBattery.toBoolean() == true) {
                 input "batteryThreshold", "number", title: "Be notified if battery is below this level.", required: false, value: 20
             }
@@ -163,12 +167,21 @@ def pageSettings() {
                 input "sendPushMessage", "enum", title: "Send a push notification?", metadata: [values: ["Yes", "No"]], required: false, value: "No"
                 input "phoneNumber", "phone", title: "Enter phone number to send text notification.", required: false
             }
-            input "deviceOnline", "boolean", title: "Send a notification if a device comes back online?", required: false, submitOnChange: false, value: false
-            input "askAlexa", "boolean", title: "Send notifications to Ask Alexa?", required: false, submitOnChange: false, value: false
+            input "deviceOnline", "bool", title: "Send a notification if a device comes back online?", required: false, submitOnChange: false, value: false
+            input "askAlexa", "bool", title: "Send notifications to Ask Alexa?", required: false, submitOnChange: true, value: false
+            if (askAlexa) {
+                if (state.askAlexaMQ)    
+                    input "listOfMQs", "enum", title: "Ask Alexa Message Queues", options: state.askAlexaMQ, multiple: true, required: false
+                input "expire", "number", title: "Expire Ask Alexa Messages after this many hours", required: false, submitOnChange: false
+            }
             input "resendTime", "time", title: "Send reminder alerts at this time each day", required: false
-            input "askAlexaRemind", "boolean", title: "Allow reminder alerts to be sent to Ask Alexa?", required: false, submitOnChange: false, value: false
+            input "askAlexaRemind", "bool", title: "Allow reminder alerts to be sent to Ask Alexa?", required: false, submitOnChange: true, value: false
+            if (askAlexaRemind)
+                input "askAlexaRemindOverwrite", "bool", title: "Overwrite previous reminder alerts that were sent to Alexa?", required: false, submitOnChange: true, value: false
         }
         section([title: "Other Options", mobileOnly: true]) {
+            input "checkHub", "bool", title: "Send notification if hub goes offline?", required: false, submitOnChange: false, value: false
+            input "healthCheck", "bool", title: "Use Online / Offline status if available?", required: false, submitOnChange: false, value: false
             label title: "Assign a name for the app (optional)", required: false
         }    
     }
@@ -193,8 +206,8 @@ def pageExclusions() {
         def eventExclude = [:]
         def batteryExclude = [:]
         
-        [motiondevices, humiditydevices, leakdevices, thermodevices, tempdevices, contactdevices,
-            lockdevices, alarmdevices, switchdevices, presencedevices, smokedevices].each { n ->
+        [actuatordevices, sensordevices, motiondevices, humiditydevices, leakdevices, thermodevices, tempdevices, contactdevices,
+            lockdevices, alarmdevices, switchdevices, presencedevices, smokedevices, buttondevices, valvedevices, hubdevices].each { n ->
                 if (n != null){ 
                    allDevices += n
                 }
@@ -239,7 +252,9 @@ def pageStatus(params) {
         uninstall: false
     ]
 
-    if (settings.motiondevices == null &&
+    if (settings.actuatordevices == null &&
+        settings.sensordevices == null &&
+        settings.motiondevices == null &&
         settings.humiditydevices == null &&
         settings.leakdevices == null &&
         settings.thermodevices == null &&
@@ -249,6 +264,9 @@ def pageStatus(params) {
         settings.alarmdevices == null &&
         settings.switchdevices == null &&
         settings.smokedevices == null &&
+        settings.valvedevices == null &&
+        settings.buttondevices == null &&
+        settings.hubdevices == null &&
         settings.presencedevices == null) {
         return pageConfigure()
     }
@@ -327,8 +345,9 @@ def runNowHandler(evt) {
 }
 
 def eventCheck(evt = false) {
+    //if (evt != false) log.debug "${evt.name} : ${evt.value}"
     if (allOk) {
-        if ((settings.checkEvent != null && settings.checkEvent.toBoolean()) || evt == false) {
+        if ((settings.checkEvent != null && settings.checkEvent) || evt == false) {
             if (settings.minimumCheck == null || settings.minimumCheck == "") settings.minimumCheck = 15
             if (atomicState.lastExe != null && now() - atomicState.lastExe > settings.minimumCheck * 60 * 1000) {
                 atomicState.lastExe = now()
@@ -364,6 +383,8 @@ def doCheck() {
         def badlistMap = []
         def errorlist = ""
         def errorlistMap = []
+        def hublist = ""
+        def hublistMap = []
         def delaylist = ""
         def delaylistMap = []
         def delaylistCheck = ""
@@ -371,15 +392,14 @@ def doCheck() {
         def allDevices = []
         def batteryDevices = []
 
-        [motiondevices, humiditydevices, leakdevices, thermodevices, tempdevices, contactdevices,
-            lockdevices, alarmdevices, switchdevices, presencedevices, smokedevices].each { n ->
+        [actuatordevices, sensordevices, motiondevices, humiditydevices, leakdevices, thermodevices, tempdevices, contactdevices,
+            lockdevices, alarmdevices, switchdevices, presencedevices, smokedevices, valvedevices, buttondevices].each { n ->
                 if (n != null){ 
                    allDevices += n
                 }
         }
 
         if (allDevices != null) {
-            
             def allDevicesUnique = allDevices.unique({
                 a,
                 b -> a["id"] <=> b["id"]
@@ -423,17 +443,24 @@ def doCheck() {
                if (n == it.id) dexclude = true
             }
             if (dexclude == false){
-                def lastTime = it.events([all: true, max: 100]).find {
-                    (it.source as String) == "DEVICE"
+                def lastTime
+                if(it.status.toUpperCase() in ["ONLINE"] && healthCheck?.toBoolean() == true && it.getLastActivity() != null) {
+                    lastTime = it.getLastActivity()
+                } else if (it.status.toUpperCase() in ["OFFLINE"] && healthCheck?.toBoolean() == true){
+                   lastTime = null
+                } else {
+                    lastTime = it.events([all: true, max: 100]).find {
+                        (it.source as String) == "DEVICE"
+                    }
+                    lastTime = lastTime?.date
                 }
 
                 try {
                     if (lastTime) {
-                        lastTime = lastTime.date.time
+                        lastTime = lastTime.time
                         def hours = (((rightNow.time - lastTime) / 60000) / 60)
                         def xhours = (hours.toFloat() / 1).round(2)
                         if (xhours > timer) {
-                            //def thours = (hours.toFloat()/1).round(0)
                             delaylistMap += [
                                 [time: "$xhours", name: "$it.displayName", id: "$it.id"]
                             ]
@@ -554,8 +581,25 @@ def doCheck() {
                 ]
             }
             def batterylistMapDiff = batterylistUniqueSorted - tempMap
+            def hublistMapDiff
+            def hubOnlinelistMapDiff
 
-            if ((batteryerrorlistMapDiff || batterylistMapDiff || badlistMapDiff || errorlistMapDiff || delaylistCheckMapDiff || onlinedelaylistMapDiff || onlineerrorlistMapDiff || onlinebadlistMapDiff) && ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0"))) {
+            if (checkHub.toBoolean() == true) {
+                if (location.hubs[0].status.toUpperCase() in ["INACTIVE", "DISCONNECTED"] ) {
+                    hublistMap += [name: "${location.hubs[0].name}", id: "${location.hubs[0].id}"]
+                }
+                tempMap = []
+                atomicState.hublistMap.each {
+                    tempMap += [
+                        [name: "$it.name", id: "$it.id"]
+                    ]
+                }
+                hublistMapDiff = hublistMap - tempMap
+                hubOnlinelistMapDiff = tempMap - hublistMap
+            }
+
+            if ((batteryerrorlistMapDiff || batterylistMapDiff || badlistMapDiff || errorlistMapDiff || delaylistCheckMapDiff || onlinedelaylistMapDiff || onlineerrorlistMapDiff || onlinebadlistMapDiff || hublistMapDiff || hubOnlinelistMapDiff) && 
+               ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0") || (askAlexa?.toBoolean() == true))) {
 
                 log.trace "Preparing Notification"
 
@@ -578,7 +622,7 @@ def doCheck() {
                     }).each {
                         notificationDelaylist += "${it.time} - ${it.name}\n"
                     }
-                    notifications += ["Devices delayed:\n${notificationDelaylist.trim()}"]
+                    notifications += ["Devices Delayed:\n${notificationDelaylist.trim()}"]
                 }
                 if (deviceOnline != null && deviceOnline.toBoolean() == true && (onlinedelaylistMapDiff || onlineerrorlistMapDiff || onlinebadlistMapDiff)) {
                     def onlineListCombined = onlinedelaylistMapDiff + onlineerrorlistMapDiff + onlinebadlistMapDiff
@@ -622,7 +666,7 @@ def doCheck() {
                     batteryerrorlistMapDiff.each {
                         notificationBatteryErrorlist += "${it.name}\n"
                     }
-                    notifications += ["Devices not reporting battery:\n${notificationBatteryErrorlist.trim()}"]
+                    notifications += ["Devices Not Reporting Battery:\n${notificationBatteryErrorlist.trim()}"]
                 }
 
                 if (errorlistMapDiff) {
@@ -630,12 +674,32 @@ def doCheck() {
                     errorlistMapDiff.each {
                         notificationErrorlist += "${it.name}\n"
                     }
-                    notifications += ["Devices with Errors:\n${notificationErrorlist.trim()}"]
+                    notifications += ["Devices With Errors:\n${notificationErrorlist.trim()}"]
                 }
-
+                
+                if (hublistMapDiff) {
+                    hublistMapDiff.each {
+                        notifications += ["SmartThings Hub OFFLINE: ${it.name}"]
+                    }
+                }
+                
+                if (hubOnlinelistMapDiff) {
+                    hubOnlinelistMapDiff.each {
+                        notifications += ["SmartThings Hub ONLINE: ${it.name}"]
+                    }
+                }
+                if (askAlexa != null && askAlexa?.toBoolean() == true) {
+                    log.debug "Sending to Ask Alexa"
+                    notifications.each() {
+                        def exHours = expire ? expire as int : 0
+                        def exSec= exHours * 60 * 60
+                        if (listOfMQs) sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it, unit:it.replaceAll("\\s","").split(':')[0], data: [queues: listOfMQs, overwrite:false ,expires:exSec, notifyOnly:false])
+                        else sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it, overwrite:false)
+                    }
+                }
+                
                 if ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0")) {
                     notifications.each() {
-                        if (askAlexa != null && askAlexa.toBoolean() == true) sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it)
                         send(it)
                     }
                 }
@@ -659,6 +723,7 @@ def doCheck() {
             atomicState.errorlistMap = errorlistMap
             atomicState.delaylistMap = delaylistMap
             atomicState.delaylistCheckMap = delaylistCheckMap
+            atomicState.hublistMap = hublistMap
 
 
             atomicState.isRunning = now()
@@ -679,6 +744,8 @@ def doCheck() {
 //***************************
 def pageConfigure() {
 
+    def inputActuatorDevices = [name: "actuatordevices", type: "capability.actuator", title: "Which actuators?", multiple: true, required: false]
+    def inputSensorDevices = [name: "sensordevices", type: "capability.sensor", title: "Which sensors?", multiple: true, required: false]
     def inputMotionDevices = [name: "motiondevices", type: "capability.motionSensor", title: "Which motion sensors?", multiple: true, required: false]
     def inputHumidityDevices = [name: "humiditydevices", type: "capability.relativeHumidityMeasurement", title: "Which humidity sensors?", multiple: true, required: false]
     def inputLeakDevices = [name: "leakdevices", type: "capability.waterSensor", title: "Which leak sensors?", multiple: true, required: false]
@@ -690,6 +757,9 @@ def pageConfigure() {
     def inputSwitchDevices = [name: "switchdevices", type: "capability.switch", title: "Which switches?", multiple: true, required: false]
     def inputPresenceDevices = [name: "presencedevices", type: "capability.presenceSensor", title: "Which presence sensors?", multiple: true, required: false]
     def inputSmokeDevices = [name: "smokedevices", type: "capability.smokeDetector", title: "Which Smoke/CO2 detectors?", multiple: true, required: false]
+    def inputValveDevices = [name: "valvedevices", type: "capability.valve", title: "Which valves?", multiple: true, required: false]
+    def inputButtonDevices = [name: "buttondevices", type: "capability.button", title: "Which Button Devices?", multiple: true, required: false]
+    def inputHubDevices = [name: "hubdevices", type: "hub", title: "Which SmartThings Hubs?", multiple: true, required: false]
 
     def pageProperties = [name: "pageConfigure",
         title: "Device Monitor - Configure Devices",
@@ -699,8 +769,13 @@ def pageConfigure() {
     ]
 
     return dynamicPage(pageProperties) {
-        
-        section("Devices To Check") {
+        section ('Select Devices by Type') {
+        	paragraph "Most devices should fall into one of these two categories"
+            input inputActuatorDevices
+            input inputSensorDevices
+        }
+        section("Select Devices by Capability") {
+            paragraph "If devices could not be found above"
             input inputMotionDevices
             input inputHumidityDevices
             input inputLeakDevices
@@ -712,6 +787,9 @@ def pageConfigure() {
             input inputSwitchDevices
             input inputPresenceDevices
             input inputSmokeDevices
+            input inputValveDevices
+            input inputButtonDevices
+            //input inputHubDevices
         }
         
     }
@@ -730,6 +808,7 @@ def updated() {
 def initialize() {
     log.trace "Initializing Device Monitor"
     scheduleCheck()
+    subscribe(location, "askAlexaMQ", askAlexaMQHandler)
     subscribeDevices()
 }
 
@@ -839,8 +918,15 @@ def resend() {
             ] 
         }
     }
+    def hublistMapDiff = []
+    atomicState.hublistMap.each {
+        hublistMapDiff += [
+            [name: "$it.name", id: "$it.id"]
+        ]
+    }
     
-    if ((batteryerrorlistMapDiff || batterybadlistMapDiff || badlistMapDiff || errorlistMapDiff || delaylistMapDiff) && ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0"))) {
+    if ((batteryerrorlistMapDiff || batterybadlistMapDiff || badlistMapDiff || errorlistMapDiff || delaylistMapDiff || hublistMapDiff) && 
+       ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0") || (askAlexa?.toBoolean() == true))) {
 
         log.trace "Preparing Notification"
 
@@ -853,7 +939,7 @@ def resend() {
             delaylistMapDiff.each {
                 notificationDelaylist += "${it.time} - ${it.name}\n"
             }
-            notifications += ["Reminder - Devices delayed:\n${notificationDelaylist.trim()}"]
+            notifications += ["Reminder - Devices Delayed:\n${notificationDelaylist.trim()}"]
         }
         if (badlistMapDiff) {
             def notificationBadlist = ""
@@ -875,19 +961,33 @@ def resend() {
             batteryerrorlistMapDiff.each {
                 notificationBatteryErrorlist += "${it.name}\n"
             }
-            notifications += ["Reminder - Devices not reporting battery:\n${notificationBatteryErrorlist.trim()}"]
+            notifications += ["Reminder - Devices Not Reporting Battery:\n${notificationBatteryErrorlist.trim()}"]
         }
         if (errorlistMapDiff) {
             def notificationErrorlist = ""
             errorlistMapDiff.each {
                 notificationErrorlist += "${it.name}\n"
             }
-            notifications += ["Reminder - Devices with Errors:\n${notificationErrorlist.trim()}"]
+            notifications += ["Reminder - Devices With Errors:\n${notificationErrorlist.trim()}"]
+        }
+        if (hublistMapDiff) {
+            hublistMapDiff.each {
+                notifications += ["Reminder - SmartThings Hub OFFLINE: ${it.name}"]
+            }
         }
 
+        if (askAlexa != null && askAlexa?.toBoolean() == true) {
+            log.debug "Resending to Ask Alexa"
+            notifications.each() {
+                def exHours = expire ? expire as int : 0
+                def exSec= exHours * 60 * 60
+                if (listOfMQs) sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it, unit:it.replaceAll("\\s","").split(':')[0], data: [queues: listOfMQs, overwrite:(askAlexaRemindOverwrite == true) ,expires:exSec, notifyOnly:false])
+                else sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it, overwrite:false)
+            }
+        }
+                
         if ((location.contactBookEnabled && recipients) || (sendPushMessage != "No") || (phoneNumber != "0")) {
             notifications.each() {
-                if (askAlexaRemind != null && askAlexaRemind.toBoolean() == true) sendLocationEvent(name: "AskAlexaMsgQueue", value: "Device Monitor", isStateChange: true, descriptionText: it)
                 send(it)
             }
         }
@@ -898,6 +998,8 @@ def subscribeDevices() {
 
     log.trace "subscribing to Devices"
     subscribe(app, runNowHandler)
+    subscribe(actuatordevices, "actuator", eventCheck, [filterEvents: false])
+    subscribe(sensordevices, "sensor", eventCheck, [filterEvents: false])
     subscribe(motiondevices, "motion", eventCheck, [filterEvents: false])
     subscribe(humiditydevices, "relativeHumidity", eventCheck, [filterEvents: false])
     subscribe(leakdevices, "water", eventCheck, [filterEvents: false])
@@ -911,7 +1013,10 @@ def subscribeDevices() {
     subscribe(switchdevices, "switch", eventCheck, [filterEvents: false])
     subscribe(presencedevices, "presence", eventCheck, [filterEvents: false])
     subscribe(smokedevices, "smokeDetector", eventCheck, [filterEvents: false])
-
+    subscribe(valvedevices, "valve", eventCheck, [filterEvents: false])
+    subscribe(buttondevices, "button", eventCheck, [filterEvents: false])
+    subscribe(location.hubs, "hubInfo", eventCheck, [filterEvents: false])
+    subscribe(location, eventCheck)
 }
 
 
@@ -921,12 +1026,15 @@ private send(message) {
     if (location.contactBookEnabled && recipients) {
         log.debug("Sending notifications to selected contacts...")
         sendNotificationToContacts(message, recipients)
-    } else if (sendPushMessage != "No") {
-        log.debug("Sending Push Notification...")
-        sendPush(message)
-    } else if (phoneNumber != "0") {
-        log.debug("Sending text message...")
-        sendSms(phoneNumber, message)
+    } else {
+        if (sendPushMessage != "No") {
+            log.debug("Sending Push Notification...")
+            sendPush(message)
+        } 
+        if (phoneNumber) {
+            log.debug("Sending text message...")
+            sendSms(phoneNumber, message)
+        }
     }
 }
 
@@ -978,4 +1086,14 @@ private hhmm(time, fmt = "h:mm a") {
 
 private timeIntervalLabel() {
     (starting && ending) ? hhmm(starting) + "-" + hhmm(ending, "h:mm a z"): ""
+}
+
+def askAlexaMQHandler(evt) {
+    if (!evt) return
+    switch (evt.value) {
+	    case "refresh":
+		    state.askAlexaMQ = evt.jsonData && evt.jsonData?.queues ?   evt.jsonData.queues : []
+            log.debug "Received list of queues from Ask Alexa $state.askAlexaMQ"
+        break
+    }
 }

@@ -22,6 +22,9 @@ import groovy.json.JsonBuilder
  *	v3.2 - Updated Live Logging, Cosmetics for WebHook and addition of matching 2 criteria.
  *	v3.3 - Added bulb temperature for color bulbs
  *	v3.4 - Added control for switches to only react to 'Play' and added Routine triggers
+ *	v3.5 - Added scrobble as onplay
+ *	v3.6 - Added error handling for token creation
+ *	v3.7 - Fixed the use of wildcards
  *
  */
 
@@ -57,7 +60,7 @@ def initialize() {
             createAccessToken()
         }
         
-        logWriter("URL FOR USE IN PLEX WEBHOOK:\n"+
+        logWriter("URL FOR USE IN PLEX2SMARTTHINGS EXE:\n"+
         		"<!ENTITY accessToken '${state.accessToken}'>\n"+
 				"<!ENTITY appId '${app.id}'>\n"+
 				"<!ENTITY ide '${getApiServerUrl()}'>\n"+
@@ -112,8 +115,10 @@ def parentPage() {
         section() { 
         	href(name: "pageDevice", title: "Create Virtual Device", required: false, page: "pageDevice", description: "create a virtual device here")
     	}
-
-	    if (!state.accessToken) {createAccessToken()}
+		
+        try { if (!state.accessToken) {createAccessToken()} }
+		catch (Exception e) {log.info "Unable to create access token, OAuth has probably not been enabled: $e"}
+	    
 
         // Enables logging debug only when enabled
         section(title: "ADVANCED") {
@@ -425,7 +430,7 @@ def plexWebHookHandler(){
 	def mediaType = plexJSON.Metadata.type
     // change command to right format
     switch(plexJSON.event) {
-		case ["media.play","media.resume"]:		command = "onplay"; 	break;
+		case ["media.play","media.resume","media.scrobble"]:		command = "onplay"; 	break;
         case "media.pause":						command = "onpause"; 	break;
         case "media.stop":						command = "onstop"; 	break;
         return
@@ -438,14 +443,17 @@ def plexWebHookHandler(){
 }
 
 def AppCommandRecieved(command, userName, playerName, playerIP, mediaType) {
-
+log.warn "THIS IS THE MEDIA TYPE: $mediaType COMMAND: $command"
 //Log last event
 	parent.StoreLastEvent(command, userName, playerName, playerIP, mediaType)
 	
 //Check if room found
-	def allowedDevs = ["*", "$playerIP", "$playerName", "$userName"]
+	def allowedDevs = ["$playerIP", "$playerName", "$userName"]
     
-    if (allowedDevs.contains("${playerA1}") && !matchBoth){logWriter ("Player 1 Match")}
+    log.debug "$settings.playerA1 is not in $allowedDevs"
+    
+    if (settings?.playerA1 == "*"){logWriter ("Player 1 Wildcard Match")}
+    else if (allowedDevs.contains("${playerA1}") && !matchBoth){logWriter ("Player 1 Match")}
     else if (allowedDevs.contains("${playerB1}") && !matchBoth){logWriter ("Player 2 Match")}
     else if (matchBoth && allowedDevs.contains("${playerA1}") && allowedDevs.contains("${playerB1}")){logWriter ("Player Combination Match")}
     else if ("$playerIP" == "ST Media Player Device"){logWriter ("ST Device Type Match")}

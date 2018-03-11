@@ -32,6 +32,10 @@ metadata {
 			input title: "Temperature Offset", description: "This feature allows you to correct any temperature variations by selecting an offset. Ex: If your sensor consistently reports a temp that's 5 degrees too warm, you'd enter '-5'. If 3 degrees too cold, enter '+3'.", displayDuringSetup: false, type: "paragraph", element: "paragraph"
 			input "tempOffset", "number", title: "Degrees", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: false
 		}
+            section {
+			input title: "Luminance Offset", description: "This feature allows you to correct the luminance reading by selecting an offset. Enter a value such as 20 or -20 to adjust the luminance reading.", displayDuringSetup: false, type: "paragraph", element: "paragraph"
+			input "luxOffset", "number", title: "Lux", description: "Adjust luminance by this amount", range: "*..*", displayDuringSetup: false
+		}
     }
 
     tiles(scale: 2) {
@@ -147,9 +151,9 @@ def configure() {
     
 	def configCmds = []
     configCmds += zigbee.batteryConfig()
-	configCmds += zigbee.temperatureConfig(30, 600) // Set temp reporting times // Confirmed
+	configCmds += zigbee.temperatureConfig(60, 600) // Set temp reporting times // Confirmed
     
-    configCmds += zigbee.configureReporting(0x406,0x0000, 0x18, 30, 600, null) // motion // confirmed
+    configCmds += zigbee.configureReporting(0x406,0x0000, 0x18, 5, 600, null) // motion // confirmed
     
     
     // Data type is not 0x20 = 0x8D invalid data type Unsigned 8-bit integer
@@ -212,6 +216,12 @@ def getTemperature(value) {
 private Map getLuminanceResult(rawValue) {
 	log.debug "Luminance rawValue = ${rawValue}"
 
+	if (luxOffset) {
+		def offset = luxOffset as int
+		def v = rawValue as int
+		rawValue = v + offset
+	}
+    
 	def result = [
 		name: 'illuminance',
 		value: '--',
